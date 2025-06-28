@@ -16,37 +16,31 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
-// Improved beep using persistent AudioContext to handle user gesture resume
-const playBeep = (() => {
-  let ctx = null;
-  return () => {
-    if (!ctx) {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      ctx = new AudioContext();
-    }
-    if (ctx.state === 'suspended') {
-      ctx.resume();
-    }
-    const oscillator = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 1000; // 1kHz
-    oscillator.start();
-    gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.2);
-    setTimeout(() => oscillator.stop(), 200);
-  };
-})();
+// Beep function using Web Audio API
+function playBeep() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioContext();
+  if (ctx.state === 'suspended') ctx.resume();
+  const oscillator = ctx.createOscillator();
+  const gainNode = ctx.createGain();
+  oscillator.connect(gainNode);
+  gainNode.connect(ctx.destination);
+  oscillator.type = 'sine';
+  oscillator.frequency.value = 1000; // 1kHz beep
+  oscillator.start();
+  gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.2);
+  setTimeout(() => oscillator.stop(), 200);
+}
 
-const getRandomColor = () => {
+// Generate random color hex
+function getRandomColor() {
   const letters = '0123456789ABCDEF';
   let color = '#';
-  for (let i = 0; i < 10; i++) {
-    color += letters[Math.floor(Math.random() * letters.length)];
+  for (let i = 0; i < 6; i++) {
+    color += letters[Math.floor(Math.random() * 16)];
   }
   return color;
-};
+}
 
 const initialDocumentData = {
   currentCall: { nome: '', sala: '', chamadoEm: null },
@@ -55,7 +49,7 @@ const initialDocumentData = {
 
 export default function CallPage() {
   const { docId } = useParams();
-  const [documentData, setDocumentData] = useState(null);
+  const [documentData, setDocumentData] = useState(initialDocumentData);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
   const [userId, setUserId] = useState('');
@@ -77,11 +71,13 @@ export default function CallPage() {
       localStorage.setItem('collab_user_id', localUserId);
     }
     setUserId(localUserId);
+
     if (!localUserName) {
-      localUserName = prompt("Digite seu nome para colaborar:") || \`Anônimo-\${localUserId.substring(0, 4)}\`;
+      localUserName = prompt("Digite seu nome para colaborar:") || `Anônimo-${localUserId.substring(0, 4)}`;
       localStorage.setItem('collab_user_name', localUserName);
     }
     setUserName(localUserName);
+
     if (!localUserColor) {
       localUserColor = getRandomColor();
       localStorage.setItem('collab_user_color', localUserColor);
@@ -93,7 +89,7 @@ export default function CallPage() {
     if (!docId || !userId || !userName || !userColor) return;
     const docRef = doc(db, 'documents', docId);
 
-    const unsubscribeDoc = onSnapshot(docRef, docSnap => {
+    const unsubDoc = onSnapshot(docRef, docSnap => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setDocumentData({
@@ -106,6 +102,7 @@ export default function CallPage() {
       setLoading(false);
     });
 
+    // presence
     presenceRef.current = doc(db, 'documents', docId, 'activeUsers', userId);
     const updatePresence = async () => {
       await setDoc(
@@ -117,39 +114,37 @@ export default function CallPage() {
     updatePresence();
     presenceIntervalRef.current = setInterval(updatePresence, 15000);
 
-    const usersCollectionRef = collection(db, 'documents', docId, 'activeUsers');
-    const unsubscribeUsers = onSnapshot(usersCollectionRef, snapshot => {
+    // active users
+    const usersRef = collection(db, 'documents', docId, 'activeUsers');
+    const unsubUsers = onSnapshot(usersRef, snapshot => {
       const users = [];
       const cutoff = new Date(Date.now() - 60000);
-      snapshot.forEach(userDoc => {
-        const userData = userDoc.data();
-        if (userData.lastSeen?.toDate() > cutoff) {
-          users.push({ id: userDoc.id, ...userData });
-        }
+      snapshot.forEach(docUser => {
+        const u = docUser.data();
+        if (u.lastSeen?.toDate() > cutoff) users.push({ id: docUser.id, ...u });
       });
       setActiveUsers(users);
     });
 
-    // Beep on new call, then every 20s
-    if (documentData?.currentCall?.nome) {
+    // beep on new call and every 20s
+    if (documentData.currentCall.nome) {
       playBeep();
       if (beepIntervalRef.current) clearInterval(beepIntervalRef.current);
       beepIntervalRef.current = setInterval(playBeep, 20000);
     }
 
-    const handleBeforeUnload = async () => {
+    const handleUnload = async () => {
       await deleteDoc(presenceRef.current);
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('beforeunload', handleUnload);
 
     return () => {
-      unsubscribeDoc();
-      unsubscribeUsers();
+      unsubDoc(); unsubUsers();
       clearInterval(presenceIntervalRef.current);
       if (beepIntervalRef.current) clearInterval(beepIntervalRef.current);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('beforeunload', handleUnload);
     };
-  }, [docId, userId, userName, userColor, documentData?.currentCall?.nome]);
+  }, [docId, userId, userName, userColor, documentData.currentCall.nome]);
 
   const updateField = async (path, value) => {
     if (!docId) return;
@@ -159,59 +154,34 @@ export default function CallPage() {
   const handleCall = () => {
     if (!nome || !sala) return;
     const newCall = { nome, sala, chamadoEm: new Date().toISOString() };
-    const newHistory = [...(documentData.history || []), newCall];
+    const newHistory = [...documentData.history, newCall];
     updateField('currentCall', newCall);
     updateField('history', newHistory);
-    setNome('');
-    setSala('');
+    setNome(''); setSala('');
   };
 
   const calcularTempo = data => {
     const diff = Math.floor((Date.now() - new Date(data).getTime()) / 60000);
-    return diff === 0 ? 'Agora' : \`Há \${diff} min\`;
+    return diff === 0 ? 'Agora' : `Há ${diff} min`;
   };
 
-  if (loading || !documentData) {
-    return <div className="flex justify-center items-center h-screen"><p>Carregando painel...</p></div>;
-  }
-  if (!docId) {
-    return <div className="flex justify-center items-center h-screen"><p>ID do documento não fornecido.</p></div>;
-  }
+  if (loading) return <div className="flex justify-center items-center h-screen"><p>Carregando painel...</p></div>;
+  if (!docId) return <div className="flex justify-center items-center h-screen"><p>ID do documento não fornecido.</p></div>;
 
   return (
     <div className="container mx-auto p-4 flex flex-col min-h-screen bg-gray-100">
       <header className="mb-6 py-4">
         <h1 className="text-3xl font-bold text-center text-black">Painel de Chamadas</h1>
-        <p className="text-sm text-gray-600 text-center">
-          Documento: {docId} | Editando como: <span style={{ color: userColor, fontWeight: 'bold' }}>{userName}</span>
-        </p>
+        <p className="text-sm text-gray-600 text-center">Documento: {docId} | Editando como: <span style={{ color: userColor, fontWeight: 'bold' }}>{userName}</span></p>
       </header>
       <div className="bg-white p-6 rounded shadow-md mb-6">
         <h2 className="text-xl font-semibold mb-4 text-black">Nova chamada</h2>
         <div className="flex flex-col md:flex-row gap-4">
-          <input
-            type="text"
-            placeholder="Nome do paciente"
-            value={nome}
-            onChange={e => setNome(e.target.value)}
-            className="border border-gray-300 rounded px-4 py-2 flex-1 text-black placeholder-black"
-          />
-          <input
-            type="text"
-            placeholder="Sala"
-            value={sala}
-            onChange={e => setSala(e.target.value)}
-            className="border border-gray-300 rounded px-4 py-2 w-32 text-black placeholder-black"
-          />
-          <button
-            onClick={handleCall}
-            className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition"
-          >
-            Chamar
-          </button>
+          <input type="text" placeholder="Nome do paciente" value={nome} onChange={e => setNome(e.target.value)} className="border border-gray-300 rounded px-4 py-2 flex-1 text-black placeholder-black" />
+          <input type="text" placeholder="Sala" value={sala} onChange={e => setSala(e.target.value)} className="border border-gray-300 rounded px-4 py-2 w-32 text-black placeholder-black" />
+          <button onClick={handleCall} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition">Chamar</button>
         </div>
       </div>
-
       {documentData.currentCall.nome && (
         <div className="bg-green-100 p-6 rounded shadow-md mb-6 animate-pulse">
           <h2 className="text-2xl font-bold text-green-700">Chamando: {documentData.currentCall.nome}</h2>
@@ -219,7 +189,6 @@ export default function CallPage() {
           <p className="text-sm text-gray-600">{calcularTempo(documentData.currentCall.chamadoEm)}</p>
         </div>
       )}
-
       <div className="bg-white p-6 rounded shadow-md">
         <h2 className="text-xl font-semibold mb-4 text-black">Histórico de Chamadas</h2>
         {documentData.history.length > 0 ? (
@@ -235,7 +204,6 @@ export default function CallPage() {
           <p className="text-black">Nenhuma chamada registrada ainda.</p>
         )}
       </div>
-
       <aside className="mt-8 bg-white p-4 rounded shadow-md">
         <h2 className="text-lg font-semibold mb-3 text-gray-700 border-b pb-2">Usuários Ativos ({activeUsers.length})</h2>
         <ul className="max-h-60 overflow-y-auto space-y-2">
@@ -247,10 +215,7 @@ export default function CallPage() {
           ))}
         </ul>
       </aside>
-
-      <footer className="mt-8 text-center text-sm text-gray-500 py-4 border-t border-gray-200">
-        As alterações são salvas automaticamente em tempo real.
-      </footer>
+      <footer className="mt-8 text-center text-sm text-gray-500 py-4 border-t border-gray-200">As alterações são salvas automaticamente em tempo real.</footer>
     </div>
   );
 }
