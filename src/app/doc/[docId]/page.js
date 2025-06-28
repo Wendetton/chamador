@@ -1,23 +1,56 @@
+
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { doc, onSnapshot, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 export default function ChamadorPage() {
-  const [chamadas, setChamadas] = useState([]);
+  const [pacienteAtual, setPacienteAtual] = useState({ nome: '', sala: '', chamadoEm: null });
+  const [historico, setHistorico] = useState([]);
   const [nome, setNome] = useState('');
   const [sala, setSala] = useState('');
+  const docRef = doc(db, 'painel', 'chamadaAtual');
 
-  const handleChamar = () => {
+  useEffect(() => {
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setPacienteAtual(data.pacienteAtual || { nome: '', sala: '', chamadoEm: null });
+        setHistorico(data.historico || []);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleChamar = async () => {
     if (!nome || !sala) return;
     const novaChamada = {
-      id: Date.now(),
       nome,
       sala,
-      chamadoEm: new Date(),
+      chamadoEm: new Date().toISOString(),
     };
-    setChamadas([novaChamada, ...chamadas]);
-    setNome('');
-    setSala('');
+    try {
+      await updateDoc(docRef, {
+        pacienteAtual: novaChamada,
+        historico: arrayUnion(novaChamada),
+      });
+      setNome('');
+      setSala('');
+    } catch (error) {
+      console.error("Erro ao chamar paciente:", error);
+      try {
+        // Caso o documento não exista ainda
+        await setDoc(docRef, {
+          pacienteAtual: novaChamada,
+          historico: [novaChamada],
+        });
+        setNome('');
+        setSala('');
+      } catch (err) {
+        console.error("Erro ao criar documento:", err);
+      }
+    }
   };
 
   const calcularTempo = (data) => {
@@ -55,28 +88,29 @@ export default function ChamadorPage() {
         </div>
       </div>
 
-      {chamadas.length > 0 && (
-        <>
-          <div className="bg-green-100 p-6 rounded shadow-md mb-6 animate-pulse">
-            <h2 className="text-2xl font-bold text-green-700">Chamando: {chamadas[0].nome}</h2>
-            <p className="text-lg text-green-600">Sala: {chamadas[0].sala}</p>
-            <p className="text-sm text-gray-600">{calcularTempo(chamadas[0].chamadoEm)}</p>
-          </div>
-
-          <div className="bg-white p-6 rounded shadow-md">
-            <h2 className="text-xl font-semibold mb-4">Histórico de Chamadas</h2>
-            <ul className="space-y-2 max-h-80 overflow-y-auto">
-              {chamadas.slice(1).map((chamada) => (
-                <li key={chamada.id} className="border p-3 rounded">
-                  <p className="font-medium">{chamada.nome} - Sala {chamada.sala}</p>
-                  <p className="text-xs text-gray-500">{calcularTempo(chamada.chamadoEm)}</p>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </>
+      {pacienteAtual && pacienteAtual.nome && (
+        <div className="bg-green-100 p-6 rounded shadow-md mb-6 animate-pulse">
+          <h2 className="text-2xl font-bold text-green-700">Chamando: {pacienteAtual.nome}</h2>
+          <p className="text-lg text-green-600">Sala: {pacienteAtual.sala}</p>
+          <p className="text-sm text-gray-600">{calcularTempo(pacienteAtual.chamadoEm)}</p>
+        </div>
       )}
+
+      <div className="bg-white p-6 rounded shadow-md">
+        <h2 className="text-xl font-semibold mb-4">Histórico de Chamadas</h2>
+        {historico.length > 0 ? (
+          <ul className="space-y-2 max-h-80 overflow-y-auto">
+            {[...historico].reverse().map((chamada, index) => (
+              <li key={index} className="border p-3 rounded">
+                <p className="font-medium">{chamada.nome} - Sala {chamada.sala}</p>
+                <p className="text-xs text-gray-500">{calcularTempo(chamada.chamadoEm)}</p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-gray-500">Nenhuma chamada registrada ainda.</p>
+        )}
+      </div>
     </div>
   );
 }
-
