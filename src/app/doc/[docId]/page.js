@@ -131,7 +131,7 @@ export default function CallPage() {
     if (documentData.activeCalls.length) {
       playBeep();
       if (beepIntervalRef.current) clearInterval(beepIntervalRef.current);
-      beepIntervalRef.current = setInterval(playBeep, 20000);
+      beepIntervalRef.current = setInterval(playBeep, 10000);
     } else {
       if (beepIntervalRef.current) clearInterval(beepIntervalRef.current);
     }
