@@ -171,7 +171,7 @@ export default function CallPage() {
 
   return (
     <div className="container mx-auto p-4 bg-gray-100 min-h-screen">
-      <h1 className="text-3xl mb-4 text-center">Painel de Chamadas</h1>
+      <h1 className="text-3xl mb-4 text-center text-black">Painel de Chamadas</h1>
       <div className="bg-white p-4 rounded mb-6">
         <h2 className="text-xl font-semibold text-black mb-2">Nova chamada</h2>
         <div className="flex gap-2">
